@@ -25,6 +25,7 @@ import attr
 import struct
 import serial
 import logging
+import datetime
 import collections
 
 
@@ -41,6 +42,9 @@ class Frame:
 
 	MAXUINT12 = 4095
 	MAXUINT16 = 65535
+
+	# Datastruct const
+	VARLEN = None
 
 	def __init__(self, src, dst, attr, data):
 		''' Creates a new frame
@@ -157,6 +161,11 @@ class DeviceInfoRequestFrame(OutFrame):
 	ATTR = 90
 	DATASTRUCT = (('infoSetCode', 1),)
 
+class ReadRequestFrame(OutFrame):
+	''' (OUT) Database Request, single table row request '''
+	ATTR = 2
+	DATASTRUCT = (('section', 1), ('row', 1))
+
 
 class InFrame(Frame):
 	''' Base class for received frames '''
@@ -183,16 +192,29 @@ class InFrame(Frame):
 
 	def parseDataStruct(self):
 		datalen = 0
+		fixedlen = 0
 		for name, length in self.DATASTRUCT:
-			datalen += length
-		if len(self.data) != datalen:
+			if length is self.VARLEN:
+				if datalen is self.VARLEN:
+					raise RuntimeError('Only one param can have variable length')
+				datalen = self.VARLEN
+				continue
+
+			fixedlen += length
+
+			if datalen is not self.VARLEN:
+				datalen += length
+
+		if datalen is not self.VARLEN and len(self.data) != datalen:
 			raise ValueError('Data len mismatch, expected {}, got {}'.format(datalen, len(self.data)))
 
 		idx = 0
 		for name, length in self.DATASTRUCT:
+			if length is self.VARLEN:
+				length = len(self.data) - fixedlen
 			value = self.data[idx:idx+length]
-			setattr(self, name, value)
 			idx += length
+			setattr(self, name, value)
 
 	def afterInInit(self):
 		''' After init tasks, useful to be overridden in child '''
@@ -242,14 +264,21 @@ class NAckFrame(InFrame):
 
 	def afterInInit(self):
 		super().afterInInit()
-		if self.resultCode != self.POSITIVE:
-			raise NotImplementedError('Unexpected ACK result code: {}'.format(self.resultCode))
+		try:
+			self.message = self.RESULTS[self.resultCode]
+		except KeyError:
+			self.message = None
 
 class DeviceInfoResponseFrame(InFrame):
 	''' (IN) A succesfull device information response '''
 	ATTR = 91
 	DATASTRUCT = (('infoSetCode', 1), ('siRelease', 8), ('siNid', 6),
 		('modemSwStackRelease', 8), ('modemFwRelease', 2), ('siType', 1))
+
+class ReadResponseFrame(InFrame):
+	''' (IN) Database Response, single table row '''
+	ATTR = 3
+	DATASTRUCT = (('section', 1), ('row', 1), ('value', Frame.VARLEN), ('updDate', 3), ('updTime', 3))
 
 
 class RecvFrame(Frame):
@@ -261,6 +290,7 @@ class RecvFrame(Frame):
 		AckFrame.ATTR: AckFrame,
 		NAckFrame.ATTR: NAckFrame,
 		DeviceInfoResponseFrame.ATTR: DeviceInfoResponseFrame,
+		ReadResponseFrame.ATTR: ReadResponseFrame,
 	}
 
 	def __init__(self):
@@ -354,6 +384,24 @@ class SiDeviceInfo:
 	modemFwRelease = attr.ib()
 	siType = attr.ib()
 
+@attr.s(frozen=True)
+class TableRow:
+	''' Holds table row data '''
+	table = attr.ib()
+	row = attr.ib()
+	value = attr.ib()
+	updated = attr.ib()
+	descr = attr.ib()
+
+
+class NAckError(RuntimeError):
+	''' Raised when a NACK is received '''
+
+	def __init__(self, code, message):
+		self.code = code
+		self.message = message
+		super().__init__('{}: {}'.format(self.code, self.message))
+
 
 class Client:
 	''' SmartInfo serial client implementation
@@ -372,6 +420,42 @@ class Client:
 
 	# Fixed Smart Info address
 	SIADDR = 127
+
+	# Table row info
+	TABLES = collections.OrderedDict([
+		(100, collections.OrderedDict([
+			(1, ('E(p) Total active energy of previous period', 'EEnergy')),
+			(6, ('E(t) Total active energy of actual period', 'EEnergy')),
+			(7, ('Et1(t) Active energy in T1 of the current period', 'EEnergy')),
+			(8, ('Et2(t) Active energy in T2 of the current period', 'EEnergy')),
+			(9, ('Et3(t) Active energy in T3 of the current period', 'EEnergy')),
+			(10, ('Et4(t) Active energy in T4 of the current period', 'EEnergy')),
+			(21, ('DATE', 'EDate')),
+			(22, ('TIME', 'ETime')),
+			(23, ('Daylight disabled/enabled', 'EByte')),
+			(24, ('Tall Time of alarm', 'ETimeA')),
+			(25, ('TypAl Type of Alarm', 'EByte')),
+			(29, ('DATE_F End data billing', 'ETimeB')),
+			(30, ('Tariff code', 'EByte')),
+			(36, ('E-(t) Total negative active energy of actual period', 'EEnergy')),
+			(50, ('Ra(t) Total value of positive reactive energy in the current period', 'EEnergy')),
+			(101, ('Total daily active energy current date', 'ESEnergy')),
+			(105, ('Instant Power (Average in Time Tx, 1 second) - PTx', 'EPower')),
+			(106, ('Button Status', 'Ebyte')),
+			(108, ('Production SM Negative Total active energy of actual period', 'EEnergy')),
+			(120, ('Diagnostic notification queue I', 'EBArrayB(36)')),
+			(121, ('Diagnostic notification queue II', 'EBArrayB(36)')),
+		])),
+		(101, collections.OrderedDict([
+			(1, ('Contractual power', 'EPower')),
+			(2, ('Available Power', 'EPower')),
+			(18, ('Model Type', 'EWord')),
+			(22, ('POD (Point of Delivery)', 'EBArray(15)')),
+			(24, ('TI Integration time for Load Profile in minutes', 'EByte')),
+			(33, ('Power Unit Mode', 'EByte')),
+			(45, ('NID SI', 'EBArray(6)')),
+		])),
+	])
 
 	def __init__(self, device):
 		self.log = logging.getLogger('siclient')
@@ -405,6 +489,9 @@ class Client:
 
 	def _expectFrame(self, received, expected):
 		if not isinstance(received, expected):
+			if isinstance(received, NAckFrame):
+				self.log.error('NACK %s: %s', ord(received.resultCode), received.message)
+				raise NAckError(ord(received.resultCode), received.message)
 			raise RuntimeError('Expected {}, received {}'.format(expected.__name__, received.__class__.__name__))
 
 	def _expectAppid(self, received):
@@ -438,6 +525,7 @@ class Client:
 		self.send(req)
 		res = self.recv()
 		self._expectFrame(res, DeviceInfoResponseFrame)
+
 		return SiDeviceInfo(
 			siRelease = res.siRelease.decode('ascii'),
 			siNid = res.siNid.hex(),
@@ -445,6 +533,129 @@ class Client:
 			modemFwRelease = struct.unpack('>H', res.modemFwRelease)[0],
 			siType = ord(res.siType),
 		)
+
+	def getTableRow(self, table, row):
+		''' Reads a single row from a table
+		@see self.TABLES
+		@param table int: Table ID 100,101
+		@param row int. Row ID 0-255
+		@return TableRow or Null if not available
+		'''
+		if type(table) is not int:
+			raise TypeError('table must be int')
+		if table not in self.TABLES:
+			raise ValueError('table must be ' + ','.join(self.TABLES.keys()))
+		if type(row) is not int:
+			raise TypeError('row must be int')
+		if row < 0 or row > 0xff:
+			raise ValueError('row must be 0-255')
+		if row not in self.TABLES[table]:
+			raise ValueError('row {} is unknown in table {}'.format(table))
+
+		if not self.addr:
+			self.enroll()
+
+		section = table - 100
+
+		self.log.info('Requesting row %s from section %s (table %s)', row, section, table)
+		req = ReadRequestFrame(self.addr, self.SIADDR, chr(section), chr(row))
+		self.send(req)
+		res = self.recv()
+		try:
+			self._expectFrame(res, ReadResponseFrame)
+		except NAckError as e:
+			if e.code == 4:
+				# Row not found
+				return None
+			raise
+
+		updDate = self.parseEParam(res.updDate, 'Edate')
+		updTime = self.parseEParam(res.updTime, 'Etime')
+		if updDate and updTime:
+			updated = datetime.datetime.combine(updDate, updTime),
+		elif updDate is None and updTime is None:
+			updated = None
+		elif updDate is None:
+			updated = updTime
+		elif updTime is None:
+			updated = updDate
+
+		return TableRow(
+			table = ord(res.section) + 100,
+			row = ord(res.row),
+			value = self.parseEParam(res.value, self.TABLES[table][row][1]),
+			updated = updated,
+			descr = self.TABLES[table][row][0],
+		)
+
+	def getTable(self, table):
+		''' Reads all rows from a table
+		@see self.TABLES
+		@see self.getTableRow
+		@param table int: Table ID 100,101
+		@return collections.OrderedDict: list of TableRow
+		'''
+		if type(table) is not int:
+			raise TypeError('table must be int')
+		if table not in self.TABLES:
+			raise ValueError('table must be ' + ','.join(self.TABLES.keys()))
+
+		data = collections.OrderedDict()
+		for row in self.TABLES[table].keys():
+			data[row] = self.getTableRow(table, row)
+
+		return data
+
+	def parseEParam(self, value, vtype):
+		''' Parses a table param into a python one
+		@param value bytes: The raw value
+		@param vtype str: The type name, case-insensitive
+		@return The pythonized value
+		'''
+		if vtype.lower() in ('Ebyte'.lower(), 'Eshort'.lower()):
+			self._checkEParam(value, vtype, 1)
+			return ord(value)
+
+		if vtype.lower() in ('Eword'.lower(), 'EPower'.lower()):
+			self._checkEParam(value, vtype, 2)
+			return struct.unpack('>H', value)[0]
+
+		if vtype.lower() in ('EEnergy'.lower(), 'ESEnergy'.lower()):
+			self._checkEParam(value, vtype, 4)
+			return struct.unpack('>I', value)[0]
+
+		if vtype.lower() == 'Edate'.lower():
+			self._checkEParam(value, vtype, 3)
+			d, m, y = value
+			if d == m == y == 0:
+				return None
+			return datetime.date(day=d, month=m, year=y+2000)
+
+		if vtype.lower() == 'Etime'.lower():
+			self._checkEParam(value, vtype, 3)
+			h, m, s = value
+			if h == m == s == 0:
+				return None
+			return datetime.time(hour=h, minute=m, second=s)
+
+		if vtype.lower() == 'EtimeA'.lower():
+			self._checkEParam(value, vtype, 4)
+			d, h, m, s = value
+			return datetime.timedelta(days=d, hours=h, minutes=m, seconds=s)
+
+		if vtype.lower() == 'EBArrayB'.lower() or vtype.lower().startswith('EBArrayB('.lower()):
+			return value
+
+		if vtype.lower() == 'EBArray'.lower() or vtype.lower().startswith('EBArray('.lower()):
+			return value.rstrip(b'\x00')
+
+		raise ValueError('Unknown Eparam type {}'.format(vtype))
+
+	def _checkEParam(self, value, vtype, vlen):
+		if type(value) is not bytes:
+			raise TypeError('Eparam must be bytes')
+		if len(value) != vlen:
+			raise ValueError('{} must be exactly {} bytes long'.format(vtype, vlen))
 
 	def send(self, frame):
 		''' Sends a frame
@@ -533,9 +744,17 @@ class Client:
 
 
 if __name__ == '__main__':
-	import logging
+	import itertools
+
 	logging.basicConfig(level=logging.DEBUG)
 
 	sic = Client('/dev/ttyACM0')
-	print(sic.checkSmLink())
-	print(sic.getDeviceInfo())
+	#print(sic.checkSmLink())
+	#print(sic.getDeviceInfo())
+	#for idx, row in sic.getTable(100).items():
+	#	print(idx, row)
+	for idx, row in itertools.chain(sic.getTable(100).items(), sic.getTable(101).items()):
+		if not row:
+			continue
+		print('{}: {}'.format(row.descr, row.value))
+	#print(sic.getTableRow
