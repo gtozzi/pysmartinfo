@@ -34,6 +34,7 @@ VERSION = '0.1'
 # The only authorized ApplicationID, as stated in spec 4.2.1
 APPID = b'PCMC000000XXXXXX'
 
+
 class Frame:
 	''' A single communication frame'''
 	START = 0xf7
@@ -45,6 +46,8 @@ class Frame:
 
 	# Datastruct const
 	VARLEN = None
+
+	LOG = logging.getLogger('frame')
 
 	def __init__(self, src, dst, attr, data):
 		''' Creates a new frame
@@ -166,6 +169,11 @@ class ReadRequestFrame(OutFrame):
 	ATTR = 2
 	DATASTRUCT = (('section', 1), ('row', 1))
 
+class LogRequestFrame(OutFrame):
+	''' (OUT) Log Request '''
+	ATTR = 78
+	DATASTRUCT = (('logType', 1),)
+
 
 class InFrame(Frame):
 	''' Base class for received frames '''
@@ -187,10 +195,10 @@ class InFrame(Frame):
 		self.received = recvFrame.received
 		self.complete = recvFrame.complete
 
-		self.parseDataStruct()
-		self.afterInInit()
+		self._parseDataStruct()
+		self._afterInInit()
 
-	def parseDataStruct(self):
+	def _parseDataStruct(self):
 		datalen = 0
 		fixedlen = 0
 		for name, length in self.DATASTRUCT:
@@ -206,6 +214,7 @@ class InFrame(Frame):
 				datalen += length
 
 		if datalen is not self.VARLEN and len(self.data) != datalen:
+			self.LOG.error('DATA LEN MISMATCH %s/%s: %s', len(self.data), datalen, self.data)
 			raise ValueError('Data len mismatch, expected {}, got {}'.format(datalen, len(self.data)))
 
 		idx = 0
@@ -216,7 +225,7 @@ class InFrame(Frame):
 			idx += length
 			setattr(self, name, value)
 
-	def afterInInit(self):
+	def _afterInInit(self):
 		''' After init tasks, useful to be overridden in child '''
 		pass
 
@@ -238,8 +247,8 @@ class AckFrame(InFrame):
 	# The only possible result code
 	POSITIVE = 0x00
 
-	def afterInInit(self):
-		super().afterInInit()
+	def _afterInInit(self):
+		super()._afterInInit()
 		if self.resultCode != bytes([self.POSITIVE]):
 			raise NotImplementedError('Unexpected ACK result code: {}'.format(self.resultCode))
 
@@ -262,8 +271,8 @@ class NAckFrame(InFrame):
 		b'\x0a': 'Target not present in configuration',
 	}
 
-	def afterInInit(self):
-		super().afterInInit()
+	def _afterInInit(self):
+		super()._afterInInit()
 		try:
 			self.message = self.RESULTS[self.resultCode]
 		except KeyError:
@@ -280,6 +289,23 @@ class ReadResponseFrame(InFrame):
 	ATTR = 3
 	DATASTRUCT = (('section', 1), ('row', 1), ('value', Frame.VARLEN), ('updDate', 3), ('updTime', 3))
 
+class LogResponseFrame(InFrame):
+	''' (IN) Log Delivery Response, header '''
+	ATTR = 77
+	DATASTRUCT = (('firstTime', 5), ('samples', 2), ('ti', 1), ('logType', 1), ('firstValue', 4))
+
+class LogDataBlockFrame(InFrame):
+	''' (IN) Log Delivery Response, row '''
+	ATTR = 79
+	DATASTRUCT = (('logType', 1), ('block', 1), ('blocks', 1), ('recordsData', Frame.VARLEN))
+
+	def _afterInInit(self):
+		super()._afterInInit()
+		if len(self.recordsData) % 9:
+			raise ValueError('RecordsData len must be a multiple of 9, got {}'.format(len(self.recordsData)))
+
+		self.records = [self.recordsData[i:i+9] for i in range(0, len(self.recordsData), 9)]
+
 
 class RecvFrame(Frame):
 	''' Represents a still unknown frame being received, handles frame reception '''
@@ -291,6 +317,8 @@ class RecvFrame(Frame):
 		NAckFrame.ATTR: NAckFrame,
 		DeviceInfoResponseFrame.ATTR: DeviceInfoResponseFrame,
 		ReadResponseFrame.ATTR: ReadResponseFrame,
+		LogResponseFrame.ATTR: LogResponseFrame,
+		LogDataBlockFrame.ATTR: LogDataBlockFrame,
 	}
 
 	def __init__(self):
@@ -302,6 +330,7 @@ class RecvFrame(Frame):
 		self.received = True
 		self.complete = False
 		self._status = 'waitforstart'
+		self._bytes = b''
 
 	def eat(self, byte):
 		''' Eats next byte for the packet
@@ -309,6 +338,7 @@ class RecvFrame(Frame):
 		@return A Frame object when packet is complete
 		'''
 		byte = self._bytesParam('byte', byte, 1, False)
+		self._bytes += byte
 
 		if self._status == 'waitforstart':
 			if byte != bytes([self.START]):
@@ -365,7 +395,12 @@ class RecvFrame(Frame):
 				self.complete = True
 				self._status = 'done'
 				if ord(self.attr) in self.KNOWNATTRS:
-					return self.KNOWNATTRS[ord(self.attr)](self)
+					try:
+						return self.KNOWNATTRS[ord(self.attr)](self)
+					except Exception as e:
+						self.LOG.error('Error while instantiating final packet: %s', e)
+						self.LOG.debug(self)
+						raise
 				return self
 			return None
 
@@ -373,6 +408,10 @@ class RecvFrame(Frame):
 			raise RuntimeError('Packet is complete, cannot eat more bytes')
 
 		raise RuntimeError('Internal error: unknown status {}'.format(self._status))
+
+	def __bytes__(self):
+		''' Returns raw bytes eaten so far '''
+		return self._bytes
 
 
 @attr.s(frozen=True)
@@ -403,8 +442,8 @@ class NAckError(RuntimeError):
 		super().__init__('{}: {}'.format(self.code, self.message))
 
 
-class Client:
-	''' SmartInfo serial client implementation
+class AB:
+	''' SmartInfo serial Additional Block (client) implementation
 
 	@warning Packets with wrong checksum are ignored, data is big-endian
 
@@ -457,8 +496,27 @@ class Client:
 		])),
 	])
 
+	# Logs info
+	LOGS = {
+		4: 'Total value of positive active energy (in Wh, 4 bytes) reported for'
+			' each time slot Ti, with relative timestamp frozen in the energy'
+			' register at Ti. All data in the buffer are (about 10 days of'
+			' sampling) sent to the AB starting from the oldest one.',
+		7: 'Total value of negative active energy (in Wh, 4 bytes) received by'
+			' primary meter reported for each time slot Ti, with relative'
+			' timestamp frozen in energy register at Ti. All data in the buffer'
+			' are (about 10 days of sampling) sent to the AB starting from the'
+			' oldest one.',
+		11: 'Only in the prosumer case (Model Type = 0x02), the total value of'
+			' negative active energy (in Wh, 4 bytes) received from the'
+			' secondary meter reported for each time slot Ti, with relative'
+			' timestamp frozen in energy register at Ti. All data in the buffer'
+			' are sent to the AB starting from the oldest one.',
+	}
+
+
 	def __init__(self, device):
-		self.log = logging.getLogger('siclient')
+		self.log = logging.getLogger('ab')
 		self.ser = serial.Serial(device, self.DEFBAUD, self.DEFBYTESIZE,
 			self.DEFPARITY, self.DEFSTOPBITS, timeout=self.BASETIMEOUT)
 		# Receive buffer
@@ -488,11 +546,16 @@ class Client:
 		self.log.info('Received address %s', self.addr)
 
 	def _expectFrame(self, received, expected):
-		if not isinstance(received, expected):
-			if isinstance(received, NAckFrame):
-				self.log.error('NACK %s: %s', ord(received.resultCode), received.message)
-				raise NAckError(ord(received.resultCode), received.message)
-			raise RuntimeError('Expected {}, received {}'.format(expected.__name__, received.__class__.__name__))
+		if isinstance(received, expected):
+			return
+
+		if received is None:
+			self.log.debug('Inbuf dump: %s', self.inbuf)
+		elif isinstance(received, NAckFrame):
+			self.log.error('NACK %s: %s', ord(received.resultCode), received.message)
+			raise NAckError(ord(received.resultCode), received.message)
+
+		raise RuntimeError('Expected {}, received {}'.format(expected.__name__, received.__class__.__name__))
 
 	def _expectAppid(self, received):
 		if received.applicationId != APPID:
@@ -657,6 +720,65 @@ class Client:
 		if len(value) != vlen:
 			raise ValueError('{} must be exactly {} bytes long'.format(vtype, vlen))
 
+	def getLog(self, ltype):
+		''' Reads a log (load profile)
+		@param ltype int: Log ID 4,7,11
+		@return collections.OrderedDict: list of LogRow or None if not available
+		'''
+		if type(ltype) is not int:
+			raise TypeError('ltype must be int')
+		if ltype not in self.LOGS:
+			raise ValueError('ltype must be ' + ','.join(self.LOGS.keys()))
+
+		if not self.addr:
+			self.enroll()
+
+		self.log.info('Requesting log %s', ltype)
+		req = LogRequestFrame(self.addr, self.SIADDR, chr(ltype))
+		self.send(req)
+		res = self.recv()
+		try:
+			self._expectFrame(res, LogResponseFrame)
+		except NAckError as e:
+			if e.code == 4:
+				# Row not found
+				return None
+			raise
+
+		y, m, d, h, m = res.firstTime
+		firstTime = datetime.datetime(year=y+2000, month=m, day=d, hour=h, minute=m)
+		samples = struct.unpack('>H', res.samples)[0]
+		ti = ord(res.ti)
+		logType = ord(res.logType)
+		firstValue = struct.unpack('>I', res.firstValue)[0]
+
+		print (firstTime, samples, ti, logType, firstValue)
+		for i in range(samples):
+			res = self.recv()
+			print(res, res.records)
+
+
+		return
+
+		updDate = self.parseEParam(res.updDate, 'Edate')
+		updTime = self.parseEParam(res.updTime, 'Etime')
+		if updDate and updTime:
+			updated = datetime.datetime.combine(updDate, updTime),
+		elif updDate is None and updTime is None:
+			updated = None
+		elif updDate is None:
+			updated = updTime
+		elif updTime is None:
+			updated = updDate
+
+		return TableRow(
+			table = ord(res.section) + 100,
+			row = ord(res.row),
+			value = self.parseEParam(res.value, self.TABLES[table][row][1]),
+			updated = updated,
+			descr = self.TABLES[table][row][0],
+		)
+
 	def send(self, frame):
 		''' Sends a frame
 		@param frame The frame to be sent
@@ -701,7 +823,12 @@ class Client:
 
 			time.sleep(self.BASETIMEOUT)
 
-		return self.inbuf
+		# Timed out: move bytes back into the receive buffer
+		for byte in bytes(frame):
+			assert 0 <= byte <= 255
+			self.inbuf.append(chr(byte))
+
+		return None
 
 	def formatFrameBytes(self, data):
 		''' Returns frame bytes formatted as string '''
@@ -748,13 +875,14 @@ if __name__ == '__main__':
 
 	logging.basicConfig(level=logging.DEBUG)
 
-	sic = Client('/dev/ttyACM0')
+	sic = AB('/dev/ttyACM0')
 	#print(sic.checkSmLink())
 	#print(sic.getDeviceInfo())
 	#for idx, row in sic.getTable(100).items():
 	#	print(idx, row)
-	for idx, row in itertools.chain(sic.getTable(100).items(), sic.getTable(101).items()):
-		if not row:
-			continue
-		print('{}: {}'.format(row.descr, row.value))
-	#print(sic.getTableRow
+	#for idx, row in itertools.chain(sic.getTable(100).items(), sic.getTable(101).items()):
+	#	if not row:
+	#		continue
+	#	print('{}: {}'.format(row.descr, row.value))
+	print(sic.getTableRow(100, 105))
+	print(sic.getLog(4))
