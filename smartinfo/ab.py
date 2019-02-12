@@ -86,10 +86,7 @@ class NAckError(RuntimeError):
 class AB:
 	''' SmartInfo serial Additional Block (client) implementation
 
-	@warning Packets with wrong checksum are ignored, data is big-endian
-
-	Steps to establish communication:
-	1. Send Enrollment request
+	@warning Packets with wrong checksum are ignored by SI, data is big-endian
 	'''
 
 	DEFBAUD = 57600
