@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 '''
-e-distribuzione Smart Info cummunication library
+Unofficial e-distribuzione's Smart Info cummunication library
 
 @author Gabriele Tozzi <gabriele@tozzi.eu>
 
