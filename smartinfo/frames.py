@@ -116,6 +116,24 @@ class InvalidFrameError(Exception):
 	pass
 
 
+class AckBaseFrame:
+	''' Utility base class for slightly different IN/OUT Ack frames '''
+	DATASTRUCT = (('resultCode', 1),)
+	# The only possible result code
+	POSITIVE = 0x00
+
+
+class NAckBaseFrame:
+	''' Utility base class for slightly different IN/OUT NAck frames '''
+	DATASTRUCT = (('resultCode', 1),)
+
+	def _getMessage(self):
+		try:
+			return self.RESULTS[self.resultCode]
+		except KeyError:
+			return None
+
+
 class OutFrame(Frame):
 	''' Base class for outgoing frames '''
 	def __init__(self, src, dst, *args):
@@ -164,6 +182,22 @@ class LogRequestFrame(OutFrame):
 	''' (OUT) Log Request '''
 	ATTR = 78
 	DATASTRUCT = (('logType', 1),)
+
+class ApplAckFrame(AckBaseFrame, OutFrame):
+	''' (OUT) Generic positive acnowledgment frame '''
+	ATTR = 252
+
+class ApplNAckFrame(NAckBaseFrame, OutFrame):
+	''' (OUT) Generic negative acnowledgment frame '''
+	ATTR = 254
+	# Known result code explanations
+	RESULTS = {
+		b'\x00': 'Message not correct',
+		b'\x01': 'ATTR not valid',
+		b'\x02': 'not valid Parameter',
+		b'\x03': 'stop sequence',
+		b'\x04': 'buffer not available',
+	}
 
 
 class InFrame(Frame):
@@ -217,7 +251,7 @@ class InFrame(Frame):
 			setattr(self, name, value)
 
 	def _afterInInit(self):
-		''' After init tasks, useful to be overridden in child '''
+		''' After inbound init tasks, useful to be overridden in child '''
 		pass
 
 
@@ -231,22 +265,18 @@ class AddressResponseFrame(InFrame):
 	ATTR = 71
 	DATASTRUCT = (('applicationId', 16), ('address', 1))
 
-class AckFrame(InFrame):
+class SiAckFrame(AckBaseFrame, InFrame):
 	''' (IN) Generic positive acnowledgment frame '''
 	ATTR = 251
-	DATASTRUCT = (('resultCode', 1),)
-	# The only possible result code
-	POSITIVE = 0x00
 
 	def _afterInInit(self):
 		super()._afterInInit()
 		if self.resultCode != bytes([self.POSITIVE]):
 			raise NotImplementedError('Unexpected ACK result code: {}'.format(self.resultCode))
 
-class NAckFrame(InFrame):
+class SiNAckFrame(NAckBaseFrame, InFrame):
 	''' (IN) Generic negative acnowledgment frame '''
 	ATTR = 255
-	DATASTRUCT = (('resultCode', 1),)
 	# Known result code explanations
 	RESULTS = {
 		b'\x00': 'Message not correct',
@@ -264,10 +294,7 @@ class NAckFrame(InFrame):
 
 	def _afterInInit(self):
 		super()._afterInInit()
-		try:
-			self.message = self.RESULTS[self.resultCode]
-		except KeyError:
-			self.message = None
+		self.message = self._getMessage()
 
 class DeviceInfoResponseFrame(InFrame):
 	''' (IN) A succesfull device information response '''
@@ -295,7 +322,11 @@ class LogDataBlockFrame(InFrame):
 		if len(self.recordsData) % 9:
 			raise ValueError('RecordsData len must be a multiple of 9, got {}'.format(len(self.recordsData)))
 
-		self.records = [self.recordsData[i:i+9] for i in range(0, len(self.recordsData), 9)]
+		self.records = []
+		for i in range(0, len(self.recordsData), 9):
+			rawRecord = self.recordsData[i:i+9]
+			record = (rawRecord[:5], rawRecord[5:])
+			self.records.append(record)
 
 
 class RecvFrame(Frame):
@@ -304,8 +335,8 @@ class RecvFrame(Frame):
 	KNOWNATTRS = {
 		EnrolmentResponseFrame.ATTR: EnrolmentResponseFrame,
 		AddressResponseFrame.ATTR: AddressResponseFrame,
-		AckFrame.ATTR: AckFrame,
-		NAckFrame.ATTR: NAckFrame,
+		SiAckFrame.ATTR: SiAckFrame,
+		SiNAckFrame.ATTR: SiNAckFrame,
 		DeviceInfoResponseFrame.ATTR: DeviceInfoResponseFrame,
 		ReadResponseFrame.ATTR: ReadResponseFrame,
 		LogResponseFrame.ATTR: LogResponseFrame,

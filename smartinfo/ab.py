@@ -57,6 +57,22 @@ class TableRow:
 	updated = attr.ib()
 	descr = attr.ib()
 
+@attr.s(frozen=True)
+class Log:
+	''' Holds the log headers and samples (rows) '''
+	firstTime = attr.ib()
+	samplesCnt = attr.ib()
+	ti = attr.ib()
+	logType = attr.ib()
+	firstValue = attr.ib()
+	samples = attr.ib()
+
+@attr.s(frozen=True)
+class LogSample:
+	''' Holds a single log sample '''
+	timestamp = attr.ib()
+	value = attr.ib()
+
 
 class NAckError(RuntimeError):
 	''' Raised when a NACK is received '''
@@ -176,7 +192,7 @@ class AB:
 
 		if received is None:
 			self.log.debug('Inbuf dump: %s', self.inbuf)
-		elif isinstance(received, frames.NAckFrame):
+		elif isinstance(received, frames.SiNAckFrame):
 			self.log.error('NACK %s: %s', ord(received.resultCode), received.message)
 			raise NAckError(ord(received.resultCode), received.message)
 
@@ -197,7 +213,7 @@ class AB:
 		req = frames.SmartMeterComLinkCheckRequestFrame(self.addr, self.SIADDR, frames.SmartMeterComLinkCheckRequestFrame.PRIMARY)
 		self.send(req)
 		res = self.recv()
-		self._expectFrame(res, frames.AckFrame)
+		self._expectFrame(res, frames.SiAckFrame)
 
 		return True
 
@@ -348,7 +364,7 @@ class AB:
 	def getLog(self, ltype):
 		''' Reads a log (load profile)
 		@param ltype int: Log ID 4,7,11
-		@return collections.OrderedDict: list of LogRow or None if not available
+		@return Log or None if not available
 		'''
 		if type(ltype) is not int:
 			raise TypeError('ltype must be int')
@@ -370,39 +386,46 @@ class AB:
 				return None
 			raise
 
-		y, m, d, h, m = res.firstTime
-		firstTime = datetime.datetime(year=y+2000, month=m, day=d, hour=h, minute=m)
-		samples = struct.unpack('>H', res.samples)[0]
-		ti = ord(res.ti)
-		logType = ord(res.logType)
-		firstValue = struct.unpack('>I', res.firstValue)[0]
-
-		print (firstTime, samples, ti, logType, firstValue)
-		for i in range(samples):
-			res = self.recv()
-			print(res, res.records)
-
-
-		return
-
-		updDate = self.parseEParam(res.updDate, 'Edate')
-		updTime = self.parseEParam(res.updTime, 'Etime')
-		if updDate and updTime:
-			updated = datetime.datetime.combine(updDate, updTime),
-		elif updDate is None and updTime is None:
-			updated = None
-		elif updDate is None:
-			updated = updTime
-		elif updTime is None:
-			updated = updDate
-
-		return TableRow(
-			table = ord(res.section) + 100,
-			row = ord(res.row),
-			value = self.parseEParam(res.value, self.TABLES[table][row][1]),
-			updated = updated,
-			descr = self.TABLES[table][row][0],
+		y, m, d, h, n = res.firstTime
+		log = Log(
+			firstTime = datetime.datetime(year=y+2000, month=m, day=d, hour=h, minute=n),
+			samplesCnt = struct.unpack('>H', res.samples)[0],
+			ti = ord(res.ti),
+			logType = ord(res.logType),
+			firstValue = struct.unpack('>I', res.firstValue)[0],
+			samples = [],
 		)
+
+		# Just if samplesCnt + while True in one row
+		while log.samplesCnt:
+			# Receive next block, will contain up to 6 samples
+			block = self.recv()
+			if block is None:
+				break
+
+			# Acknowledge it
+			ack = frames.ApplAckFrame(self.addr, self.SIADDR, frames.ApplAckFrame.POSITIVE)
+			self.send(ack)
+
+			assert block.logType == res.logType
+			bid = ord(block.block)
+			blocks = ord(block.blocks)
+			self.log.debug('Block %s/%s', bid, blocks)
+			for ts, sample in block.records:
+				y, m, d, h, n = ts
+				sample = LogSample(
+					timestamp = datetime.datetime(year=y+2000, month=m, day=d, hour=h, minute=n),
+					value = struct.unpack('>I', sample)[0],
+				)
+				self.log.debug('Sample: %s', sample)
+				log.samples.append(sample)
+
+			if bid == blocks:
+				# Last block
+				break
+
+		assert len(log.samples) == log.samplesCnt
+		return log
 
 	def send(self, frame):
 		''' Sends a frame
