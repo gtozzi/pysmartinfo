@@ -66,4 +66,7 @@ Example usage:
 	# 2019-02-08 11:54:00 2000400
 	# …
 	# 2019-02-12 07:37:00 2002000
+
+	# Sets Smart Info led as Yellow, blinking fast
+	sic.setLed(True, 'yellow', 'fast')
 ```

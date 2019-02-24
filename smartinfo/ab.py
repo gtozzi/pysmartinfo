@@ -307,6 +307,17 @@ class AB:
 
 		return data
 
+	def getDiagnostic(self):
+		''' Reads diagnostic info from table 100 rows 120 and 121
+		@return Diagnostic info
+		'''
+		row120 = self.getTableRow(100, 120)
+		row121 = self.getTableRow(100, 121)
+
+		diag = row120.value + row121.value
+
+		return diag
+
 	def parseEParam(self, value, vtype):
 		''' Parses a table param into a python one
 		@param value bytes: The raw value
@@ -423,6 +434,59 @@ class AB:
 
 		assert len(log.samples) == log.samplesCnt
 		return log
+
+	def setLed(self, on, color='green', blink=False):
+		''' Sets SI led status
+		@param on: led on/off status
+		@param color: 'yellow' or 'green' (ignored on off)
+		@param blink: 'fast', 'slow' or False
+		@return True on success
+		'''
+		if type(on) is not bool:
+			raise TypeError('on must be bool')
+		if type(color) is not str:
+			raise TypeError('color must be str')
+		if type(blink) not in (str, bool):
+			raise TypeError('blink must be str or bool')
+		if color not in ('green', 'yellow'):
+			raise ValueError('color must be yellow or green')
+		if blink is not False and blink not in ('fast', 'slow'):
+			raise ValueError('blink must be False, slow or fast')
+
+		if not self.addr:
+			self.enroll()
+
+		# 0: OFF
+		# 1: Yellow blinking slow
+		# 2: Yellow blinking fast
+		# 3: Green blinking slow
+		# 4: Green blinking fast
+		# 5: Green ON
+		# 6: Yellow ON
+		if not on:
+			status = 0
+		elif color == 'yellow' and blink == 'slow':
+			status = 1
+		elif color == 'yellow' and blink == 'fast':
+			status = 2
+		elif color == 'yellow' and blink is False:
+			status = 6
+		elif color == 'green' and blink == 'slow':
+			status = 3
+		elif color == 'green' and blink == 'fast':
+			status = 4
+		elif color == 'green' and blink is False:
+			status = 5
+		else:
+			raise NotImplementedError()
+
+		self.log.info('Setting SI Led status %s', status)
+		req = frames.SetLedRequestFrame(self.addr, self.SIADDR, status)
+		self.send(req)
+		res = self.recv()
+		self._expectFrame(res, frames.SiAckFrame)
+
+		return True
 
 	def send(self, frame):
 		''' Sends a frame

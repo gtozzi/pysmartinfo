@@ -138,6 +138,8 @@ class OutFrame(Frame):
 	''' Base class for outgoing frames '''
 	def __init__(self, src, dst, *args):
 		''' Creates the frame, see self.DATASTRUCT for arguments '''
+		assert self.ATTR % 2 == 0, 'OutFrames must have an even attr id'
+
 		if len(args) != len(self.DATASTRUCT):
 			raise TypeError('Expected {} arguments, got {}'.format(len(self.DATASTRUCT), len(args)))
 
@@ -183,6 +185,11 @@ class LogRequestFrame(OutFrame):
 	ATTR = 78
 	DATASTRUCT = (('logType', 1),)
 
+class SetLedRequestFrame(OutFrame):
+	''' (OUT) Set Led Request '''
+	ATTR = 76
+	DATASTRUCT = (('status', 1),)
+
 class ApplAckFrame(AckBaseFrame, OutFrame):
 	''' (OUT) Generic positive acnowledgment frame '''
 	ATTR = 252
@@ -205,6 +212,8 @@ class InFrame(Frame):
 
 	def __init__(self, recvFrame):
 		''' Creates the frame from the base RecvFrame '''
+		assert self.ATTR % 2 == 1, 'InFrames must have an odd attr id'
+
 		if not isinstance(recvFrame, Frame):
 			raise TypeError('recvFrame must be a frame')
 		if not recvFrame.received:

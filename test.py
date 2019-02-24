@@ -28,6 +28,10 @@ if __name__ == '__main__':
 
 	#print(sic.getTableRow(100, 105))
 
-	log = sic.getLog(4)
-	for sample in log.samples:
-		print(str(sample.timestamp), sample.value)
+	#log = sic.getLog(4)
+	#for sample in log.samples:
+	#	print(str(sample.timestamp), sample.value)
+
+	#sic.setLed(False)
+
+	print(sic.getDiagnostic())
