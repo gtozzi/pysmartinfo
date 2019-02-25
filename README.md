@@ -78,4 +78,7 @@ Example usage:
 	# Notification(type=5, typeName='PW_LINK', typeDescr='Power Line Communication Error', code=8, name='NOTIFICATION_INCOMING_NEGATIVE_ENERGY_NOT_VALID_RESUMED', timestamp=datetime.datetime(2019, 2, 24, 23, 21, 10), extra=None)
 	# Notification(type=5, typeName='PW_LINK', typeDescr='Power Line Communication Error', code=7, name='NOTIFICATION_INCOMING_NEGATIVE_ENERGY_NOT_VALID', timestamp=datetime.datetime(2019, 2, 25, 1, 10, 4), extra=None)
 	# …
+
+	# Clears the diagnostic registers
+	sic.clearDiagnostic()
 ```

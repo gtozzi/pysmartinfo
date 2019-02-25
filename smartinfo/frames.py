@@ -190,6 +190,12 @@ class SetLedRequestFrame(OutFrame):
 	ATTR = 76
 	DATASTRUCT = (('status', 1),)
 
+class DiagnosticClearRequestFrame(OutFrame):
+	''' (OUT) Diagnostic Clear '''
+	ATTR = 96
+	# Mode is always zero
+	DATASTRUCT = (('mode', 1),)
+
 class ApplAckFrame(AckBaseFrame, OutFrame):
 	''' (OUT) Generic positive acnowledgment frame '''
 	ATTR = 252

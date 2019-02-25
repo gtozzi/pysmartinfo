@@ -390,6 +390,10 @@ class AB:
 			raw = diag[idx:idx+6]
 			ntype, code, tsOrExtra = struct.unpack('>BBI', raw)
 
+			if ntype == 0:
+				assert code == 0 and tsOrExtra == 0, 'Non empty zero-notification'
+				continue
+
 			if ntype in self.NOTIFICATION_TYPES:
 				typeName, typeDescr = self.NOTIFICATION_TYPES[ntype]
 			else:
@@ -406,11 +410,26 @@ class AB:
 				typeDescr = typeDescr,
 				code = code,
 				name = name,
-				timestamp = datetime.datetime.fromtimestamp(tsOrExtra) if hasts else None,
+				timestamp = datetime.datetime.utcfromtimestamp(tsOrExtra) if hasts else None,
 				extra = tsOrExtra if not hasts else None,
 			))
 
 		return notifications
+
+	def clearDiagnostic(self):
+		''' Clears diagnostic info (table 100 rows 120 and 121)
+		@return True on success
+		'''
+		if not self.addr:
+			self.enroll()
+
+		self.log.info('Requesting diagnostic clear')
+		req = frames.DiagnosticClearRequestFrame(self.addr, self.SIADDR, b'\x00')
+		self.send(req)
+		res = self.recv()
+		self._expectFrame(res, frames.SiAckFrame)
+
+		return True
 
 	def parseEParam(self, value, vtype):
 		''' Parses a table param into a python one
