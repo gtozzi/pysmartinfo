@@ -69,4 +69,13 @@ Example usage:
 
 	# Sets Smart Info led as Yellow, blinking fast
 	sic.setLed(True, 'yellow', 'fast')
+
+	# Retrieves notifications from diagnostic registers
+	for notification in sic.getDiagnostic():
+		print(notification)
+
+	# prints:
+	# Notification(type=5, typeName='PW_LINK', typeDescr='Power Line Communication Error', code=8, name='NOTIFICATION_INCOMING_NEGATIVE_ENERGY_NOT_VALID_RESUMED', timestamp=datetime.datetime(2019, 2, 24, 23, 21, 10), extra=None)
+	# Notification(type=5, typeName='PW_LINK', typeDescr='Power Line Communication Error', code=7, name='NOTIFICATION_INCOMING_NEGATIVE_ENERGY_NOT_VALID', timestamp=datetime.datetime(2019, 2, 25, 1, 10, 4), extra=None)
+	# …
 ```

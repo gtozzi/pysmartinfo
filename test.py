@@ -34,4 +34,5 @@ if __name__ == '__main__':
 
 	#sic.setLed(False)
 
-	print(sic.getDiagnostic())
+	for notification in sic.getDiagnostic():
+		print(notification)

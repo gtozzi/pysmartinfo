@@ -74,6 +74,18 @@ class LogSample:
 	value = attr.ib()
 
 
+@attr.s(frozen=True)
+class Notification:
+	''' Holds a notification '''
+	type = attr.ib()
+	typeName = attr.ib()
+	typeDescr = attr.ib()
+	code = attr.ib()
+	name = attr.ib()
+	timestamp = attr.ib()
+	extra = attr.ib()
+
+
 class NAckError(RuntimeError):
 	''' Raised when a NACK is received '''
 
@@ -150,6 +162,63 @@ class AB:
 			' secondary meter reported for each time slot Ti, with relative'
 			' timestamp frozen in energy register at Ti. All data in the buffer'
 			' are sent to the AB starting from the oldest one.',
+	}
+
+	# Notification types code: (name, descr)
+	NOTIFICATION_TYPES = {
+		1: ('INFO', 'Informative'),
+		2: ('ERROR', 'Internal operating error'),
+		3: ('WARNING', 'Warning and degradation signalling'),
+		4: ('FATAL', 'No operation'),
+		5: ('PW_LINK', 'Power Line Communication Error'),
+		6: ('HOST_LINK', 'Host Communication Error'),
+	}
+
+	# Notification descriptions (type, code): (name, timestamp)
+	NOTIFICATIONS = {
+		(1,  1): ('NOTIFICATION_BOOT', True),
+		(1,  2): ('NOTIFICATION_DIAGNOSTIC_CLEARED', True),
+		(1,  3): ('NOTIFICATION_DIAGNOSTIC_AUTOCLEARED', True),
+		(2,  1): ('NOTIFICATION_CE_NOT_ASSIGNED', True),
+		(2,  2): ('NOTIFICATION_CE_NOT_ASSIGNED_RESUMED', True),
+		(2,  3): ('NOTIFICATION_AVAILABLE_POWER_NOT_ASSIGNED', True),
+		(2,  4): ('NOTIFICATION_AVAILABLE_POWER_NOT_ASSIGNED_RESUMED', True),
+		(2,  5): ('NOTIFICATION_TAB_CODE_PRIMARY_NO_MAPPING', False),
+		(2,  6): ('NOTIFICATION_TAB_CODE_PRIMARY_NO_MAPPING_RESUMED', True),
+		(2,  7): ('NOTIFICATION_TAB_CODE_SECONDARY_NO_MAPPING', False),
+		(2,  8): ('NOTIFICATION_TAB_CODE_SECONDARY_NO_MAPPING_RESUMED', True),
+		(2,  9): ('NOTIFICATION_TAB_CODE_PRODUCTION_NO_MAPPING', False),
+		(2, 10): ('NOTIFICATION_TAB_CODE_PRODUCTION_NO_MAPPING_RESUMED', True),
+		(2, 11): ('NOTIFICATION_CE_PRIMARY_TABLE_NOT_ASSIGNED', True),
+		(2, 12): ('NOTIFICATION_CE_PRIMARY_TABLE_NOT_ASSIGNED_RESUMED', True),
+		(3,  1): ('NOTIFICATION_BATTERY_LOW', True),
+		(3,  2): ('NOTIFICATION_BATTERY_LOW_RESUMED', True),
+		(3,  3): ('NOTIFICATION_NO_PERIODIC_DATA_FROM_PRIMARY_CE', True),
+		(3,  4): ('NOTIFICATION_NO_PERIODIC_DATA_FROM_PRIMARY_CE_RESUMED', True),
+		(3,  5): ('NOTIFICATION_NO_PERIODIC_DATA_FROM_SECONDARY_CE', True),
+		(3,  6): ('NOTIFICATION_NO_PERIODIC_DATA_FROM_SECONDARY_CE_RESUMED', True),
+		(3,  7): ('NOTIFICATION_UNRESPONSIVE_PRIMARY_TABLE', True),
+		(3,  8): ('NOTIFICATION_UNRESPONSIVE_PRIMARY_TABLE_RESUMED', True),
+		(4,  1): ('NOTIFICATION_MODEM_COMMUNICATION_KO', True),
+		(4,  2): ('NOTIFICATION_MODEM_COMMUNICATION_KO_RESUMED', True),
+		(4,  3): ('NOTIFICATION_ZERO_CROSSING_FAULT', True),
+		(4,  4): ('NOTIFICATION_ZERO_CROSSING_FAULT_RESUMED', True),
+		(5,  1): ('NOTIFICATION_CE_TABLE_SIZE_MISMATCH', False),
+		(5,  2): ('NOTIFICATION_CE_TABLE_SIZE_MISMATCH_RESUMED', False),
+		(5,  3): ('NOTIFICATION_CE_TABLE_INVALID_DATA', False),
+		(5,  4): ('NOTIFICATION_CE_TABLE_INVALID_DATA_RESUMED', False),
+		(5,  5): ('NOTIFICATION_INCOMING_ACTIVE_ENERGY_NOT_VALID', True),
+		(5,  6): ('NOTIFICATION_INCOMING_ACTIVE_ENERGY_NOT_VALID_RESUMED', True),
+		(5,  7): ('NOTIFICATION_INCOMING_NEGATIVE_ENERGY_NOT_VALID', True),
+		(5,  8): ('NOTIFICATION_INCOMING_NEGATIVE_ENERGY_NOT_VALID_RESUMED', True),
+		(5,  9): ('NOTIFICATION_INCOMING_PRODUCTION_ENERGY_NOT_VALID', True),
+		(5, 10): ('NOTIFICATION_INCOMING_PRODUCTION_ENERGY_NOT_VALID_RESUMED', True),
+		(6,  1): ('NOTIFICATION_CHECKSUM_ERROR', True),
+		(6,  2): ('NOTIFICATION_CHECKSUM_ERROR_RESUMED', True),
+		(6,  3): ('NOTIFICATION_TIMING_ERROR', True),
+		(6,  4): ('NOTIFICATION_TIMING_ERROR_RESUMED', True),
+		(6,  5): ('NOTIFICATION_STX_ERROR', True),
+		(6,  6): ('NOTIFICATION_STX_ERROR_RESUMED', True),
 	}
 
 
@@ -316,7 +385,32 @@ class AB:
 
 		diag = row120.value + row121.value
 
-		return diag
+		notifications = []
+		for idx in range(0, 6*12, 6):
+			raw = diag[idx:idx+6]
+			ntype, code, tsOrExtra = struct.unpack('>BBI', raw)
+
+			if ntype in self.NOTIFICATION_TYPES:
+				typeName, typeDescr = self.NOTIFICATION_TYPES[ntype]
+			else:
+				typeName = typeDescr = None
+
+			if (ntype, code) in self.NOTIFICATIONS:
+				name, hasts = self.NOTIFICATIONS[(ntype, code)]
+			else:
+				name = hasts = None
+
+			notifications.append(Notification(
+				type = ntype,
+				typeName = typeName,
+				typeDescr = typeDescr,
+				code = code,
+				name = name,
+				timestamp = datetime.datetime.fromtimestamp(tsOrExtra) if hasts else None,
+				extra = tsOrExtra if not hasts else None,
+			))
+
+		return notifications
 
 	def parseEParam(self, value, vtype):
 		''' Parses a table param into a python one
