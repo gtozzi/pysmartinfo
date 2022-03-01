@@ -8,10 +8,11 @@ Runs some tests
 import smartinfo
 import logging
 import itertools
+import time
 
 
 if __name__ == '__main__':
-	logging.basicConfig(level=logging.DEBUG)
+	#logging.basicConfig(level=logging.DEBUG)
 
 	sic = smartinfo.ab.AB('/dev/ttyACM0')
 
@@ -36,5 +37,9 @@ if __name__ == '__main__':
 
 	#sic.clearDiagnostic()
 
-	for notification in sic.getDiagnostic():
-		print(notification)
+	#for notification in sic.getDiagnostic():
+	#	print(notification)
+
+	while(True):
+		print(sic.getTableRow(100, 105), flush=True)
+		time.sleep(1)

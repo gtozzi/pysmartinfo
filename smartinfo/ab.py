@@ -342,7 +342,7 @@ class AB:
 		updDate = self.parseEParam(res.updDate, 'Edate')
 		updTime = self.parseEParam(res.updTime, 'Etime')
 		if updDate and updTime:
-			updated = datetime.datetime.combine(updDate, updTime),
+			updated = datetime.datetime.combine(updDate, updTime)
 		elif updDate is None and updTime is None:
 			updated = None
 		elif updDate is None:

@@ -22,5 +22,5 @@ if __name__ == '__main__':
 		root, args.dest + ':' + args.destpath)
 	subprocess.run(cmd)
 
-	cmd = ('ssh', args.dest, args.destpath + '/' + os.path.basename(root) + '/test.py')
+	cmd = ('ssh', args.dest, args.destpath + '/' + os.path.basename(root) + '/status.py')
 	subprocess.run(cmd)
