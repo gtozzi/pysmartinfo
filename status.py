@@ -34,8 +34,8 @@ if __name__ == '__main__':
 		'ae_cur_period': sic.getTableRow(100, 6),
 		'ne_cur_period': sic.getTableRow(100, 36),
 		'rat_cur_period': sic.getTableRow(100, 50),
-		#'pe_cur_period': sic.getTableRow(100, 108),
-		#'ae_daily': sic.getTableRow(100, 101),
+		'pe_cur_period': sic.getTableRow(100, 108),
+		'ae_daily': sic.getTableRow(100, 101),
 		'instant_power': sic.getTableRow(100, 105),
 		'date': sic.getTableRow(100, 21),
 		'time': sic.getTableRow(100, 22),
@@ -49,7 +49,7 @@ if __name__ == '__main__':
 		'pu_mode': sic.getTableRow(101, 33),
 		'ae_log': sic.getLog(4),
 		'ne_log': sic.getLog(7),
-		#'pe_log': sic.getLog(11),
+		'pe_log': sic.getLog(11),
 		'diagnostic': sic.getDiagnostic(),
 	}
 
