@@ -38,9 +38,12 @@ VERSION = '0.1'
 # The only authorized ApplicationID, as stated in spec 4.2.1
 APPID = b'PCMC000000XXXXXX'
 
+class SiData:
+	''' Empty base common class '''
+	pass
 
 @attr.s(frozen=True)
-class SiDeviceInfo:
+class SiDeviceInfo(SiData):
 	''' Holds Smart Info device info data '''
 	siRelease = attr.ib()
 	siNid = attr.ib()
@@ -49,7 +52,7 @@ class SiDeviceInfo:
 	siType = attr.ib()
 
 @attr.s(frozen=True)
-class TableRow:
+class TableRow(SiData):
 	''' Holds table row data '''
 	table = attr.ib()
 	row = attr.ib()
@@ -58,7 +61,7 @@ class TableRow:
 	descr = attr.ib()
 
 @attr.s(frozen=True)
-class Log:
+class Log(SiData):
 	''' Holds the log headers and samples (rows) '''
 	firstTime = attr.ib()
 	samplesCnt = attr.ib()
@@ -68,14 +71,13 @@ class Log:
 	samples = attr.ib()
 
 @attr.s(frozen=True)
-class LogSample:
+class LogSample(SiData):
 	''' Holds a single log sample '''
 	timestamp = attr.ib()
 	value = attr.ib()
 
-
 @attr.s(frozen=True)
-class Notification:
+class Notification(SiData):
 	''' Holds a notification '''
 	type = attr.ib()
 	typeName = attr.ib()

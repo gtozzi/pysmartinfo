@@ -16,8 +16,8 @@ if __name__ == '__main__':
 
 	sic = smartinfo.ab.AB('/dev/ttyACM0')
 
-	#print(sic.checkSmLink())
-	#print(sic.getDeviceInfo())
+	print(sic.checkSmLink())
+	print(sic.getDeviceInfo())
 
 	#for idx, row in sic.getTable(100).items():
 	#	print(idx, row)
