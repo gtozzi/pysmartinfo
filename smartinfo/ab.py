@@ -24,6 +24,7 @@ along with this program. If not, see <http://www.gnu.org/licenses/>.
 
 import time
 import attr
+import typing
 import struct
 import serial
 import logging
@@ -34,7 +35,7 @@ from . import frames
 
 
 NAME = 'pysmartinfo'
-VERSION = '0.1'
+VERSION = '0.2'
 # The only authorized ApplicationID, as stated in spec 4.2.1
 APPID = b'PCMC000000XXXXXX'
 
@@ -224,7 +225,7 @@ class AB:
 	}
 
 
-	def __init__(self, device):
+	def __init__(self, device:str) -> None:
 		self.log = logging.getLogger('ab')
 		self.ser = serial.Serial(device, self.DEFBAUD, self.DEFBYTESIZE,
 			self.DEFPARITY, self.DEFSTOPBITS, timeout=self.BASETIMEOUT)
@@ -233,7 +234,7 @@ class AB:
 		self.enrolled = False
 		self.addr = None
 
-	def enroll(self):
+	def enroll(self) -> None:
 		''' Completes the enrollment and address request procedure '''
 		self.log.info('Negotiating enrolment')
 		req = frames.EnrolmentRequestFrame(0, self.SIADDR, APPID, b'\x01'.ljust(12,b'\x00'), b'\x02'.ljust(16,b'\x00'))
@@ -254,7 +255,7 @@ class AB:
 		self.addr = ord(res.address)
 		self.log.info('Received address %s', self.addr)
 
-	def _expectFrame(self, received, expected):
+	def _expectFrame(self, received, expected) -> None:
 		if isinstance(received, expected):
 			return
 
@@ -266,11 +267,11 @@ class AB:
 
 		raise RuntimeError('Expected {}, received {}'.format(expected.__name__, received.__class__.__name__))
 
-	def _expectAppid(self, received):
+	def _expectAppid(self, received) -> None:
 		if received.applicationId != APPID:
 			raise RuntimeError('Expected applicationId, received {}'.format(received.applicationId))
 
-	def checkSmLink(self):
+	def checkSmLink(self) -> True:
 		''' Checks link to the smart meter, automatically enroll when needed
 		@return True on success
 		'''
@@ -285,7 +286,7 @@ class AB:
 
 		return True
 
-	def getDeviceInfo(self):
+	def getDeviceInfo(self) -> SiDeviceInfo:
 		''' Requests Smart Info device information
 		@return dict
 		'''
@@ -306,12 +307,12 @@ class AB:
 			siType = ord(res.siType),
 		)
 
-	def getTableRow(self, table, row):
+	def getTableRow(self, table:int, row:int) -> TableRow|None:
 		''' Reads a single row from a table
 		@see self.TABLES
 		@param table int: Table ID 100,101
 		@param row int. Row ID 0-255
-		@return TableRow or Null if not available
+		@return TableRow or None if not available
 		'''
 		if type(table) is not int:
 			raise TypeError('table must be int')
@@ -322,7 +323,7 @@ class AB:
 		if row < 0 or row > 0xff:
 			raise ValueError('row must be 0-255')
 		if row not in self.TABLES[table]:
-			raise ValueError('row {} is unknown in table {}'.format(table))
+			raise ValueError('row {} is unknown in table {}'.format(row, table))
 
 		if not self.addr:
 			self.enroll()
@@ -360,7 +361,7 @@ class AB:
 			descr = self.TABLES[table][row][0],
 		)
 
-	def getTable(self, table):
+	def getTable(self, table) -> dict[int,TableRow]:
 		''' Reads all rows from a table
 		@see self.TABLES
 		@see self.getTableRow
@@ -378,7 +379,7 @@ class AB:
 
 		return data
 
-	def getDiagnostic(self):
+	def getDiagnostic(self) -> list[Notification]:
 		''' Reads diagnostic info from table 100 rows 120 and 121
 		@return Diagnostic info
 		'''
@@ -387,7 +388,7 @@ class AB:
 
 		diag = row120.value + row121.value
 
-		notifications = []
+		notifications:list[Notification] = []
 		for idx in range(0, 6*12, 6):
 			raw = diag[idx:idx+6]
 			ntype, code, tsOrExtra = struct.unpack('>BBI', raw)
@@ -418,7 +419,7 @@ class AB:
 
 		return notifications
 
-	def clearDiagnostic(self):
+	def clearDiagnostic(self) -> True:
 		''' Clears diagnostic info (table 100 rows 120 and 121)
 		@return True on success
 		'''
@@ -433,7 +434,7 @@ class AB:
 
 		return True
 
-	def parseEParam(self, value, vtype):
+	def parseEParam(self, value:bytes, vtype:str) -> bytes|int|datetime.date|datetime.time|datetime.timedelta:
 		''' Parses a table param into a python one
 		@param value bytes: The raw value
 		@param vtype str: The type name, case-insensitive
@@ -478,13 +479,13 @@ class AB:
 
 		raise ValueError('Unknown Eparam type {}'.format(vtype))
 
-	def _checkEParam(self, value, vtype, vlen):
+	def _checkEParam(self, value:bytes, vtype:str, vlen:int) -> None:
 		if type(value) is not bytes:
 			raise TypeError('Eparam must be bytes')
 		if len(value) != vlen:
 			raise ValueError('{} must be exactly {} bytes long'.format(vtype, vlen))
 
-	def getLog(self, ltype):
+	def getLog(self, ltype:int) -> Log|None:
 		''' Reads a log (load profile)
 		@param ltype int: Log ID 4,7,11
 		@return Log or None if not available
@@ -550,7 +551,7 @@ class AB:
 		assert len(log.samples) == log.samplesCnt
 		return log
 
-	def setLed(self, on, color='green', blink=False):
+	def setLed(self, on:bool, color:typing.Literal['green','yellow']='green', blink:bool=False) -> True:
 		''' Sets SI led status
 		@param on: led on/off status
 		@param color: 'yellow' or 'green' (ignored on off)
@@ -603,7 +604,7 @@ class AB:
 
 		return True
 
-	def send(self, frame):
+	def send(self, frame:frames.Frame) -> None:
 		''' Sends a frame
 		@param frame The frame to be sent
 		'''
@@ -617,7 +618,7 @@ class AB:
 		self.log.debug("=> %s", self.formatFrameBytes(raw))
 		self.log.debug("=> %s", ' '.join('{:02x}'.format(b) for b in raw))
 
-	def recv(self, timeout=10):
+	def recv(self, timeout:int|float=10) -> frames.RecvFrame:
 		''' Receive next available packet, blocking up to timeout
 		@return next packet if available, or None if no packet was available/discarded
 		'''
@@ -654,7 +655,7 @@ class AB:
 
 		return None
 
-	def formatFrameBytes(self, data):
+	def formatFrameBytes(self, data:bytes) -> str:
 		''' Returns frame bytes formatted as string '''
 		if type(data) is not bytes:
 			raise ValueError('data must be bytes')
