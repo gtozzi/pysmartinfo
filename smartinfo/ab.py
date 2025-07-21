@@ -224,6 +224,16 @@ class AB:
 		(6,  6): ('NOTIFICATION_STX_ERROR_RESUMED', True),
 	}
 
+	# Values for table 101 row 18
+	MODEL_TYPES = {
+		0x000: 'Utility primary Meter (default for SI)',
+		0x001: 'Utility Production Meter',
+		0x002: 'Utility primary Meter + Utility Production Meter',
+		0x100: 'Private primary Meter',
+		0x101: 'Private Production Meter',
+		0x102: 'Private Secondary meter',
+		0x110: 'Generic Meter',
+	}
 
 	def __init__(self, device:str) -> None:
 		self.log = logging.getLogger('ab')
@@ -470,6 +480,11 @@ class AB:
 			self._checkEParam(value, vtype, 4)
 			d, h, m, s = value
 			return datetime.timedelta(days=d, hours=h, minutes=m, seconds=s)
+
+		if vtype.lower() == 'EtimeB'.lower():
+			self._checkEParam(value, vtype, 6)
+			h, m, s, d, m, y = value
+			return datetime.datetime(hour=h, minute=m, second=s, day=d, month=m, year=y+2000)
 
 		if vtype.lower() == 'EBArrayB'.lower() or vtype.lower().startswith('EBArrayB('.lower()):
 			return value
