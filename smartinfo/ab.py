@@ -520,8 +520,8 @@ class AB:
 		try:
 			self._expectFrame(res, frames.LogResponseFrame)
 		except NAckError as e:
-			if e.code == 4:
-				# Row not found
+			if e.code == 4 or e.code == 5:
+				# Row not found / Log not available
 				return None
 			raise
 
