@@ -5,7 +5,7 @@ Read SmartInfo status
 '''
 
 
-import smartinfo
+from . import smartinfo
 
 import datetime
 import logging
